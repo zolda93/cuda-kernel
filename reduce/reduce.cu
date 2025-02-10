@@ -43,6 +43,27 @@ __global__ void reduceNeighbored(int *g_idata,int *g_odata,unsigned int n)
 	if(tid ==0)g_odata[blockIdx.x] = idata[0];
 }
 
+__global__ void reduceNeighboredLess(int *g_idata, int *g_odata, unsigned int n)
+{
+	unsigned int tid = threadIdx.x;
+	unsigned int idx = threadIdx.x + blockIdx.x * blockDim.x;
+	 int *idata = g_idata + blockIdx.x * blockDim.x;
+
+	 if(idx >= n)return;
+
+	 for(int stride = 1;stride < blockDim.x;stride*=2)
+	 {
+		 int index = 2 * stride * tid;//rearrange consecutive threads
+		 if(index < blockDim.x)
+		 {
+			 idata[index] += idata[index + stride];
+		 }
+
+		 __syncthreads();
+	 }
+	 if(tid==0)g_odata[blockIdx.x] = idata[0];
+}
+
 int main(int argc,char **argv)
 {
 	bool result = false;
@@ -92,6 +113,18 @@ int main(int argc,char **argv)
     	gpu_sum = 0;
     	for (int i = 0; i < grid.x; i++) gpu_sum += h_odata[i];
     	printf("gpu Neighbored  elapsed %f sec gpu_sum: %d <<<grid %d block ""%d>>>\n", iElaps, gpu_sum, grid.x, block.x);
+
+	// kernel 1: reduceNeighboredLess
+        cudaMemcpy(d_idata, h_idata, nBytes, cudaMemcpyHostToDevice);
+        cudaDeviceSynchronize();
+        iStart = seconds();
+        reduceNeighboredLess<<<grid, block>>>(d_idata, d_odata, size);
+        cudaDeviceSynchronize();
+        iElaps = seconds() - iStart;
+        cudaMemcpy(h_odata, d_odata, grid.x * sizeof(int),cudaMemcpyDeviceToHost);
+        gpu_sum = 0;
+        for (int i = 0; i < grid.x; i++) gpu_sum += h_odata[i];
+        printf("gpu NeighboredLess  elapsed %f sec gpu_sum: %d <<<grid %d block ""%d>>>\n", iElaps, gpu_sum, grid.x, block.x);
 
 	// free host memory
     	free(h_idata);
