@@ -64,7 +64,7 @@ __global__ void reduceNeighboredLess(int *g_idata, int *g_odata, unsigned int n)
 	 if(tid==0)g_odata[blockIdx.x] = idata[0];
 }
 
-__global__ void reduceInterleaved (int *g_idata, int *g_odata, unsigned int n)
+__global__ void reduceInterleaved(int *g_idata, int *g_odata, unsigned int n)
 {
 	unsigned int tid = threadIdx.x;
 	unsigned int idx = threadIdx.x + blockIdx.x * blockDim.x;
@@ -134,6 +134,38 @@ __global__ void reduceUnrolling4(int *g_idata, int *g_odata, unsigned int n)
 	}
 	if(tid == 0)g_odata[blockIdx.x] = idata[0];
 }
+__global__ void reduceUnrolling8(int *g_idata, int *g_odata, unsigned int n)
+{
+	unsigned int tid = threadIdx.x;
+	unsigned int idx = threadIdx.x + blockIdx.x * blockDim.x * 8;
+	int *idata = g_idata + blockIdx.x * blockDim.x * 8;
+
+	if(idx + 7 * blockDim.x < n)
+	{
+		g_idata[idx] += g_idata[idx + blockDim.x];
+		g_idata[idx] += g_idata[idx + 2 * blockDim.x];
+		g_idata[idx] += g_idata[idx + 3 * blockDim.x];
+		g_idata[idx] += g_idata[idx + 4 * blockDim.x];
+		g_idata[idx] += g_idata[idx + 5 * blockDim.x];
+		g_idata[idx] += g_idata[idx + 6 * blockDim.x];
+		g_idata[idx] += g_idata[idx + 7 * blockDim.x];
+	}
+
+	__syncthreads();
+
+	for(int stride = blockDim.x / 2;stride > 0;stride /=2)
+	{
+		if(tid < stride)
+		{
+			idata[tid] += idata[tid + stride];
+		}
+
+		__syncthreads();
+	}
+
+	if(tid == 0)g_odata[blockIdx.x] = idata[0];
+}
+
 
 int main(int argc,char **argv)
 {
@@ -232,6 +264,18 @@ int main(int argc,char **argv)
         gpu_sum = 0;
         for (int i = 0; i < grid.x / 4; i++) gpu_sum += h_odata[i];
         printf("gpu Unrolling4 elapsed %f sec gpu_sum: %d <<<grid %d block %d>>>\n",iElaps,gpu_sum,grid.x/4,block.x);
+
+	// kernel 6:reduceUnrolling8
+        cudaMemcpy(d_idata, h_idata, nBytes, cudaMemcpyHostToDevice);
+        cudaDeviceSynchronize();
+        iStart = seconds();
+        reduceUnrolling8<<< grid.x/8, block >>>(d_idata, d_odata, size);
+        cudaDeviceSynchronize();
+        iElaps = seconds() - iStart;
+        cudaMemcpy(h_odata, d_odata, grid.x/8*sizeof(int), cudaMemcpyDeviceToHost);
+        gpu_sum = 0;
+        for (int i = 0; i < grid.x / 8; i++) gpu_sum += h_odata[i];
+        printf("gpu Unrolling8 elapsed %f sec gpu_sum: %d <<<grid %d block %d>>>\n",iElaps,gpu_sum,grid.x/8,block.x);
 	// free host memory
     	free(h_idata);
     	free(h_odata);
