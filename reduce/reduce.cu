@@ -211,6 +211,49 @@ __global__ void reduceUnrollWarps8(int *g_idata,int *g_odata,unsigned int n)
 }
 
 
+__global__ void reduceCompleteUnrollWarps8(int *g_idata, int *g_odata,unsigned int n)
+{
+	unsigned int tid = threadIdx.x;
+	unsigned int idx = threadIdx.x + blockIdx.x * blockDim.x * 8;
+	int *idata = g_idata + blockIdx.x * blockDim.x * 8;
+
+	if(idx + 7 * blockDim.x < n)
+        {
+                g_idata[idx] += g_idata[idx + blockDim.x];
+                g_idata[idx] += g_idata[idx + 2 * blockDim.x];
+                g_idata[idx] += g_idata[idx + 3 * blockDim.x];
+                g_idata[idx] += g_idata[idx + 4 * blockDim.x];
+                g_idata[idx] += g_idata[idx + 5 * blockDim.x];
+                g_idata[idx] += g_idata[idx + 6 * blockDim.x];
+                g_idata[idx] += g_idata[idx + 7 * blockDim.x];
+        }
+
+        __syncthreads();
+
+    	if (blockDim.x >= 1024 && tid < 512) idata[tid] += idata[tid + 512];
+    	__syncthreads();
+    	if (blockDim.x >= 512 && tid < 256) idata[tid] += idata[tid + 256];
+    	__syncthreads();
+    	if (blockDim.x >= 256 && tid < 128) idata[tid] += idata[tid + 128];
+    	__syncthreads();
+    	if (blockDim.x >= 128 && tid < 64) idata[tid] += idata[tid + 64];
+    	__syncthreads();
+	if(tid < 32)
+	{
+		volatile int *vsmem = idata;
+        	vsmem[tid] += vsmem[tid + 32];
+        	vsmem[tid] += vsmem[tid + 16];
+        	vsmem[tid] += vsmem[tid +  8];
+        	vsmem[tid] += vsmem[tid +  4];
+        	vsmem[tid] += vsmem[tid +  2];
+        	vsmem[tid] += vsmem[tid +  1];
+    	}
+    	if (tid == 0) g_odata[blockIdx.x] = idata[0];
+}
+
+
+	
+
 int main(int argc,char **argv)
 {
 	bool result = false;
@@ -332,6 +375,18 @@ int main(int argc,char **argv)
     	gpu_sum = 0;
     	for (int i = 0; i < grid.x / 8; i++) gpu_sum += h_odata[i];
     	printf("gpu UnrollWarp8 elapsed %f sec gpu_sum: %d <<<grid %d block ""%d>>>\n", iElaps, gpu_sum, grid.x / 8, block.x);
+	
+	// kernel 8: reduceCompleteUnrollWarsp8
+    	cudaMemcpy(d_idata, h_idata, nBytes, cudaMemcpyHostToDevice);
+    	cudaDeviceSynchronize();
+    	iStart = seconds();
+    	reduceCompleteUnrollWarps8<<<grid.x / 8, block>>>(d_idata, d_odata, size);
+    	cudaDeviceSynchronize();
+    	iElaps = seconds() - iStart;
+    	cudaMemcpy(h_odata, d_odata, grid.x / 8 * sizeof(int),cudaMemcpyDeviceToHost);
+    	gpu_sum = 0;
+    	for (int i = 0; i < grid.x / 8; i++) gpu_sum += h_odata[i];
+    	printf("gpu Cmptnroll8  elapsed %f sec gpu_sum: %d <<<grid %d block ""%d>>>\n", iElaps, gpu_sum, grid.x / 8, block.x);
 	// free host memory
     	free(h_idata);
     	free(h_odata);
